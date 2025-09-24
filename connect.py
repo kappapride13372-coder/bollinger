@@ -1,12 +1,7 @@
-import requests
+from binance.client import Client
 
-url = "https://api.binance.com/api/v3/klines"
-params = {"symbol": "BTCUSDT", "interval": "1h", "limit": 5}
+api_key = "U8J05yLTrjPnyyjjK6PqsadNI6XGwEO53h25PyTfIKBkUpHfiLgTrOYMeyO4mRN7"
+api_secret = "zALQdNiCInvTb7OsrbNJR6pnPGHW1ULAuvMoLyo4vW83V4k78ulGeJemXJ62FDSf"
 
-try:
-    r = requests.get(url, params=params, timeout=10)
-    r.raise_for_status()
-    data = r.json()
-    print("Success! Fetched data:", data)
-except Exception as e:
-    print("Failed:", e)
+client = Client(api_key, api_secret)
+print(client.get_account())  # should return account info if IP is whitelisted
