@@ -4,14 +4,14 @@ from binance.client import Client
 from binance.enums import *
 from binance.exceptions import BinanceAPIException
 import time
-import datetime
+from datetime import datetime, timezone
 
 # =======================
 # Binance API setup
 # =======================
 api_key = 'U8J05yLTrjPnyyjjK6PqsadNI6XGwEO53h25PyTfIKBkUpHfiLgTrOYMeyO4mRN7'
 api_secret = 'zALQdNiCInvTb7OsrbNJR6pnPGHW1ULAuvMoLyo4vW83V4k78ulGeJemXJ62FDSf'
-client = Client(api_key, api_secret)  # Binance.com Germany-based account
+client = Client(api_key, api_secret)
 
 # =======================
 # Strategy Parameters
@@ -70,7 +70,11 @@ stop_loss_pct = 0.40
 # Helper Functions
 # =======================
 def fetch_klines(symbol, interval, limit=1000):
-    klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
+    try:
+        klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
+    except BinanceAPIException as e:
+        print(f"Invalid symbol skipped: {symbol} ({e})")
+        return None
     df = pd.DataFrame(klines, columns=[
         'timestamp', 'open', 'high', 'low', 'close', 'volume',
         'close_time', 'quote_asset_volume', 'number_of_trades',
@@ -81,7 +85,7 @@ def fetch_klines(symbol, interval, limit=1000):
     df['high'] = df['high'].astype(float)
     df['low'] = df['low'].astype(float)
     df['volume'] = df['volume'].astype(float)
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
     return df
 
 def calculate_bollinger(df):
@@ -103,7 +107,7 @@ def time_until_next_candle(df):
     """Returns seconds until next 4H candle close"""
     last_close_time = df['timestamp'].iloc[-1]
     next_close_time = last_close_time + pd.Timedelta(hours=4)
-    return max((next_close_time - datetime.datetime.utcnow()).total_seconds(), 0)
+    return max((next_close_time - datetime.now(timezone.utc)).total_seconds(), 0)
 
 # =======================
 # Portfolio & Positions
@@ -121,7 +125,7 @@ def scan_for_entry(symbol, df):
         position = {
             'entry_price': last_candle['close'],
             'qty': qty,
-            'time': datetime.datetime.utcnow(),
+            'time': datetime.now(timezone.utc),
             'stop_loss': last_candle['close'] * (1 - stop_loss_pct)
         }
         positions[symbol].append(position)
@@ -134,6 +138,9 @@ while True:
     try:
         # Fetch candles once per loop (assume same for all symbols)
         df_main = fetch_klines(symbols[0], interval, limit=1000)
+        if df_main is None:
+            time.sleep(60)
+            continue
         df_main = calculate_bollinger(df_main)
 
         # Countdown until next 4H candle close
@@ -142,13 +149,16 @@ while True:
 
         # Loop through all symbols
         for symbol in symbols:
+            print(f"Scanning symbol: {symbol}")  # Print each symbol
             df = fetch_klines(symbol, interval, limit=1000)
+            if df is None:
+                continue
             df = calculate_bollinger(df)
 
             # Immediate entry scan
             scan_for_entry(symbol, df)
 
-            # Live price for stop-loss
+            # Live price for stop-loss and take-profit
             current_price = get_current_price(symbol)
             for pos in positions[symbol][:]:
                 if current_price is None:
@@ -163,8 +173,8 @@ while True:
                         'exit': current_price,
                         'profit': loss,
                         'entry_time': pos['time'],
-                        'exit_time': datetime.datetime.utcnow(),
-                        'duration': (datetime.datetime.utcnow() - pos['time']).total_seconds() / 3600
+                        'exit_time': datetime.now(timezone.utc),
+                        'duration': (datetime.now(timezone.utc) - pos['time']).total_seconds() / 3600
                     })
                     equity += loss
                     positions[symbol].remove(pos)
@@ -180,15 +190,32 @@ while True:
                         'exit': last_candle['close'],
                         'profit': profit,
                         'entry_time': pos['time'],
-                        'exit_time': datetime.datetime.utcnow(),
-                        'duration': (datetime.datetime.utcnow() - pos['time']).total_seconds() / 3600
+                        'exit_time': datetime.now(timezone.utc),
+                        'duration': (datetime.now(timezone.utc) - pos['time']).total_seconds() / 3600
                     })
                     equity += profit
                     positions[symbol].remove(pos)
 
-        # Portfolio print
-        print(f"Time: {datetime.datetime.utcnow()}")
+        # =======================
+        # Portfolio Print
+        # =======================
+        print(f"Time: {datetime.now(timezone.utc)}")
         print(f"Equity: {equity:.2f} USDT")
+
+        # Total realized PnL
+        total_realized = sum(trade['profit'] for syms in trades.values() for trade in syms)
+        print(f"Total Realized PnL: {total_realized:.2f} USDT")
+
+        # Total unrealized PnL
+        total_unrealized = 0
+        for sym in symbols:
+            current_price = get_current_price(sym)
+            if current_price is None:
+                continue
+            for pos in positions[sym]:
+                total_unrealized += (current_price - pos['entry_price']) * pos['qty']
+        print(f"Total Unrealized PnL: {total_unrealized:.2f} USDT")
+
         print(f"Time until next entry scan: {minutes}m {seconds}s")
         for symbol in symbols:
             print(f"=== {symbol} ===")
@@ -197,7 +224,7 @@ while True:
             for pos in positions[symbol]:
                 unrealized = (current_price - pos['entry_price']) * pos['qty'] if current_price else 0
                 percent_equity = (pos['qty'] * (current_price if current_price else pos['entry_price'])) / equity * 100
-                duration = (datetime.datetime.utcnow() - pos['time']).total_seconds() / 3600
+                duration = (datetime.now(timezone.utc) - pos['time']).total_seconds() / 3600
                 print(f"Entry: {pos['entry_price']:.2f}, Unrealized PnL: {unrealized:.2f}, %Equity: {percent_equity:.2f}, Duration(h): {duration:.2f}")
             print(f"Closed Trades: {len(trades[symbol])}")
         print("-"*50)
