@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 # =======================
 api_key = 'U8J05yLTrjPnyyjjK6PqsadNI6XGwEO53h25PyTfIKBkUpHfiLgTrOYMeyO4mRN7'
 api_secret = 'zALQdNiCInvTb7OsrbNJR6pnPGHW1ULAuvMoLyo4vW83V4k78ulGeJemXJ62FDSf'
-client = Client(api_key, api_secret)
+client = Client(api_key, api_secret, requests_params={'timeout': 10})  # 10s timeout
 
 # =======================
 # Strategy Parameters
@@ -68,24 +68,26 @@ stop_loss_pct = 0.40
 # =======================
 # Helper Functions
 # =======================
-def fetch_klines(symbol, interval, limit=1000):
-    try:
-        klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
-    except BinanceAPIException as e:
-        print(f"Invalid symbol skipped: {symbol} ({e})")
-        return None
-    df = pd.DataFrame(klines, columns=[
-        'timestamp', 'open', 'high', 'low', 'close', 'volume',
-        'close_time', 'quote_asset_volume', 'number_of_trades',
-        'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
-    ])
-    df['close'] = df['close'].astype(float)
-    df['open'] = df['open'].astype(float)
-    df['high'] = df['high'].astype(float)
-    df['low'] = df['low'].astype(float)
-    df['volume'] = df['volume'].astype(float)
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
-    return df
+def fetch_klines(symbol, interval, limit=1000, retries=5, delay=5):
+    for attempt in range(retries):
+        try:
+            klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
+            df = pd.DataFrame(klines, columns=[
+                'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                'close_time', 'quote_asset_volume', 'number_of_trades',
+                'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
+            ])
+            df['close'] = df['close'].astype(float)
+            df['open'] = df['open'].astype(float)
+            df['high'] = df['high'].astype(float)
+            df['low'] = df['low'].astype(float)
+            df['volume'] = df['volume'].astype(float)
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
+            return df
+        except Exception as e:
+            print(f"Error fetching {symbol} klines (attempt {attempt+1}/{retries}): {e}")
+            time.sleep(delay)
+    return None
 
 def calculate_bollinger(df):
     df['mean'] = df['close'].rolling(bollinger_length).mean()
@@ -138,18 +140,15 @@ def scan_for_entry(symbol, last_closed_candle):
 # =======================
 # Main Loop
 # =======================
-while True:
-    try:
+try:
+    while True:
         for symbol in symbols:
             df = fetch_klines(symbol, interval, limit=1000)
             if df is None or len(df) < bollinger_length:
                 continue
             df = calculate_bollinger(df)
 
-            # Use last CLOSED candle for entries
             last_closed_candle = df.iloc[-2]
-
-            # Skip if already scanned
             if last_scanned[symbol] == last_closed_candle['timestamp']:
                 continue
             last_scanned[symbol] = last_closed_candle['timestamp']
@@ -158,12 +157,9 @@ while True:
             if current_price is None:
                 continue
 
-            # Check for new entry
             scan_for_entry(symbol, last_closed_candle)
 
-            # Manage open positions
             for pos in positions[symbol][:]:
-                # Stop-loss using live price
                 if current_price < pos['stop_loss']:
                     loss = (current_price - pos['entry_price']) * pos['qty']
                     trade = {
@@ -182,7 +178,6 @@ while True:
                     positions[symbol].remove(pos)
                     continue
 
-                # Take-profit using last CLOSED candle
                 if last_closed_candle['close'] > last_closed_candle['mean']:
                     profit = (last_closed_candle['close'] - pos['entry_price']) * pos['qty']
                     trade = {
@@ -200,7 +195,6 @@ while True:
                     equity += profit
                     positions[symbol].remove(pos)
 
-        # Portfolio print
         print(f"Time: {datetime.now(timezone.utc)} | Equity: {equity:.2f} USDT")
         total_realized = sum(trade['profit'] for syms in trades.values() for trade in syms)
         print(f"Total Realized PnL: {total_realized:.2f} USDT")
@@ -214,11 +208,6 @@ while True:
         print(f"Total Unrealized PnL: {total_unrealized:.2f} USDT")
         print("-"*50)
 
-        time.sleep(60)  # check every 1 min
-
-    except BinanceAPIException as e:
-        print(f"Binance API Error: {e}")
         time.sleep(60)
-    except Exception as e:
-        print(f"Error: {e}")
-        time.sleep(60)
+except KeyboardInterrupt:
+    print("Bot stopped manually.")
