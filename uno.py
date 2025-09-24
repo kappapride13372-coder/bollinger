@@ -16,7 +16,7 @@ client = Client(api_key, api_secret)  # Binance.com Germany-based account
 # =======================
 # Strategy Parameters
 # =======================
-symbols = tickers = [
+symbols = [
     '1000WHYUSDT','FLOWUSDT','SNXUSDT','CELOUSDT','ATAUSDT','TAOUSDT','COSUSDT','MORPHOUSDT','PYTHUSDT','TNSRUSDT',
     'B3USDT','KMNOUSDT','BANUSDT','TOKENUSDT','EPICUSDT','NKNUSDT','CKBUSDT','PROMPTUSDT','MOVRUSDT','SEIUSDT',
     'CTSIUSDT','SXTUSDT','BROCCOLIF3BUSDT','YGGUSDT','HOMEUSDT','MINAUSDT','FXSUSDT','TACUSDT','ONEUSDT','BEAMXUSDT',
