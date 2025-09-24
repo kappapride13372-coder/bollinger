@@ -4,7 +4,7 @@ api_key = "U8J05yLTrjPnyyjjK6PqsadNI6XGwEO53h25PyTfIKBkUpHfiLgTrOYMeyO4mRN7"
 api_secret = "zALQdNiCInvTb7OsrbNJR6pnPGHW1ULAuvMoLyo4vW83V4k78ulGeJemXJ62FDSf"
 
 # Connect to Binance.US by specifying the testnet=False and using the US URL
-client = Client(api_key, api_secret, tld='us')  # 'tld="us"' points to Binance.US
+client = Client(api_key, api_secret)
 
 # Simple account check
 try:
