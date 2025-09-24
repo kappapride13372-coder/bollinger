@@ -45,7 +45,7 @@ symbols = [
     "YFIUSDT","COMPUSDT","WUSDT","TRBUSDT","RLCUSDT","PNUTUSDT","LINKUSDT","BNBUSDT","LDOUSDT","POLUSDT",
     "MOVRUSDT","CHESSUSDT","OPUSDT","COTIUSDT","TSTUSDT","ADAUSDT","JUPUSDT","1000CHEEMSUSDT","BELUSDT",
     "NEOUSDT","AWEUSDT","SHIBUSDT","DOGSUSDT","NXPCUSDT","DEGOUSDT","WLDUSDT","METISUSDT","SAHARAUSDT",
-    "SANDUSDT","BCHUSDT","AAVEUSDT","TONUSDT","BABYUSDT","BIOSDT","APTUSDT","SUNUSDT","CFXUSDT","BATUSDT",
+    "SANDUSDT","BCHUSDT","AAVEUSDT","TONUSDT","BABYUSDT","BIOUSDT","APTUSDT","SUNUSDT","CFXUSDT","BATUSDT",
     "ANIMEUSDT","IDUSDT","LPTUSDT","ETHFIUSDT","JSTUSDT","ORDIUSDT","PEOPLEUSDT","CRVUSDT","LTCUSDT",
     "JOEUSDT","LUNCUSDT","ETCUSDT","XLMUSDT","WLFIUSDT","DASHUSDT","ETHUSDT","WBETHUSDT","ONDOUSDT",
     "KMNOUSDT","BTCUSDT","PERPUSDT","TREEUSDT","LINEAUSDT","SEIUSDT","KAVAUSDT","PAXGUSDT","PLUMEUSDT",
@@ -136,7 +136,7 @@ def scan_for_entry(symbol, df):
 # =======================
 while True:
     try:
-        # Fetch candles once per loop (assume same for all symbols)
+        # Fetch main candle once per loop
         df_main = fetch_klines(symbols[0], interval, limit=1000)
         if df_main is None:
             time.sleep(60)
@@ -149,22 +149,24 @@ while True:
 
         # Loop through all symbols
         for symbol in symbols:
-            print(f"Scanning symbol: {symbol}")  # Print each symbol
             df = fetch_klines(symbol, interval, limit=1000)
             if df is None:
                 continue
             df = calculate_bollinger(df)
+            
+            # Last candle and current price
+            last_candle = df.iloc[-1]
+            current_price = get_current_price(symbol)
+            print(f"Scanning {symbol} | Current Price: {current_price} | Lower BB: {last_candle['lower']:.4f}")
 
-            # Immediate entry scan
+            # Check for new entries
             scan_for_entry(symbol, df)
 
-            # Live price for stop-loss and take-profit
-            current_price = get_current_price(symbol)
+            # Update positions for stop-loss and take-profit
             for pos in positions[symbol][:]:
                 if current_price is None:
                     continue
-
-                # Stop-loss triggers immediately
+                # Stop-loss
                 if current_price < pos['stop_loss']:
                     loss = (current_price - pos['entry_price']) * pos['qty']
                     trades[symbol].append({
@@ -179,9 +181,7 @@ while True:
                     equity += loss
                     positions[symbol].remove(pos)
                     continue
-
-                # Take-profit on candle close above mean
-                last_candle = df.iloc[-1]
+                # Take-profit
                 if last_candle['close'] > last_candle['mean']:
                     profit = (last_candle['close'] - pos['entry_price']) * pos['qty']
                     trades[symbol].append({
@@ -197,16 +197,14 @@ while True:
                     positions[symbol].remove(pos)
 
         # =======================
-        # Portfolio Print
+        # Portfolio Print (only open positions)
         # =======================
         print(f"Time: {datetime.now(timezone.utc)}")
         print(f"Equity: {equity:.2f} USDT")
 
-        # Total realized PnL
         total_realized = sum(trade['profit'] for syms in trades.values() for trade in syms)
         print(f"Total Realized PnL: {total_realized:.2f} USDT")
 
-        # Total unrealized PnL
         total_unrealized = 0
         for sym in symbols:
             current_price = get_current_price(sym)
@@ -216,10 +214,11 @@ while True:
                 total_unrealized += (current_price - pos['entry_price']) * pos['qty']
         print(f"Total Unrealized PnL: {total_unrealized:.2f} USDT")
 
-        print(f"Time until next entry scan: {minutes}m {seconds}s")
+        # Only show symbols with open positions
         for symbol in symbols:
+            if len(positions[symbol]) == 0:
+                continue
             print(f"=== {symbol} ===")
-            print(f"Open Positions: {len(positions[symbol])}")
             current_price = get_current_price(symbol)
             for pos in positions[symbol]:
                 unrealized = (current_price - pos['entry_price']) * pos['qty'] if current_price else 0
