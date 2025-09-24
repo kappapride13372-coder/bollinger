@@ -58,7 +58,6 @@ symbols = [
     "FLUXUSDT","BARDUSDT","BERAUSDT","BANANAS31USDT","HUMAUSDT","MITOUSDT","LAUSDT","AVNTUSDT","OGUSDT",
     "IMXUSDT","NKNUSDT","HEMIUSDT","ZENUSDT"
 ]
-
 interval = Client.KLINE_INTERVAL_4HOUR
 bollinger_length = 180
 bollinger_std = 3
@@ -103,73 +102,72 @@ def get_current_price(symbol):
         print(f"Error fetching live price for {symbol}: {e}")
         return None
 
-def time_until_next_candle(df):
-    """Returns seconds until next 4H candle close"""
-    last_close_time = df['timestamp'].iloc[-1]
-    next_close_time = last_close_time + pd.Timedelta(hours=4)
-    return max((next_close_time - datetime.now(timezone.utc)).total_seconds(), 0)
-
 # =======================
 # Portfolio & Positions
 # =======================
 positions = {s: [] for s in symbols}
 trades = {s: [] for s in symbols}
+last_scanned = {s: None for s in symbols}
 
 # =======================
-# Function to scan for new entry
+# Trade log file
 # =======================
-def scan_for_entry(symbol, df):
-    last_candle = df.iloc[-1]
-    if len(positions[symbol]) == 0 and last_candle['close'] < last_candle['lower']:
-        qty = (equity * position_size_pct) / last_candle['close']
+trade_log_file = "trades_log.txt"
+
+def log_trade(trade):
+    with open(trade_log_file, "a") as f:
+        f.write(
+            f"{trade['type'].upper()} | Symbol: {trade['symbol']} | Entry: {trade['entry']:.4f} | Exit: {trade['exit']:.4f} | Profit: {trade['profit']:.4f} | EntryTime: {trade['entry_time']} | ExitTime: {trade['exit_time']} | Duration(h): {trade['duration']:.2f}\n"
+        )
+
+# =======================
+# Function to scan for entry
+# =======================
+def scan_for_entry(symbol, last_closed_candle):
+    if len(positions[symbol]) == 0 and last_closed_candle['close'] < last_closed_candle['lower']:
+        qty = (equity * position_size_pct) / last_closed_candle['close']
         position = {
-            'entry_price': last_candle['close'],
+            'entry_price': last_closed_candle['close'],
             'qty': qty,
             'time': datetime.now(timezone.utc),
-            'stop_loss': last_candle['close'] * (1 - stop_loss_pct)
+            'stop_loss': last_closed_candle['close'] * (1 - stop_loss_pct)
         }
         positions[symbol].append(position)
-        print(f"[{symbol}] New position entered at {last_candle['close']:.2f} USDT")
+        print(f"[{symbol}] New position entered at {last_closed_candle['close']:.4f} USDT")
 
 # =======================
 # Main Loop
 # =======================
 while True:
     try:
-        # Fetch main candle once per loop
-        df_main = fetch_klines(symbols[0], interval, limit=1000)
-        if df_main is None:
-            time.sleep(60)
-            continue
-        df_main = calculate_bollinger(df_main)
-
-        # Countdown until next 4H candle close
-        seconds_to_next = time_until_next_candle(df_main)
-        minutes, seconds = divmod(int(seconds_to_next), 60)
-
-        # Loop through all symbols
         for symbol in symbols:
             df = fetch_klines(symbol, interval, limit=1000)
-            if df is None:
+            if df is None or len(df) < bollinger_length:
                 continue
             df = calculate_bollinger(df)
-            
-            # Last candle and current price
-            last_candle = df.iloc[-1]
+
+            # Use last CLOSED candle for entries
+            last_closed_candle = df.iloc[-2]
+
+            # Skip if already scanned
+            if last_scanned[symbol] == last_closed_candle['timestamp']:
+                continue
+            last_scanned[symbol] = last_closed_candle['timestamp']
+
             current_price = get_current_price(symbol)
-            print(f"Scanning {symbol} | Current Price: {current_price} | Lower BB: {last_candle['lower']:.4f}")
+            if current_price is None:
+                continue
 
-            # Check for new entries
-            scan_for_entry(symbol, df)
+            # Check for new entry
+            scan_for_entry(symbol, last_closed_candle)
 
-            # Update positions for stop-loss and take-profit
+            # Manage open positions
             for pos in positions[symbol][:]:
-                if current_price is None:
-                    continue
-                # Stop-loss
+                # Stop-loss using live price
                 if current_price < pos['stop_loss']:
                     loss = (current_price - pos['entry_price']) * pos['qty']
-                    trades[symbol].append({
+                    trade = {
+                        'symbol': symbol,
                         'type': 'stop_loss',
                         'entry': pos['entry_price'],
                         'exit': current_price,
@@ -177,34 +175,35 @@ while True:
                         'entry_time': pos['time'],
                         'exit_time': datetime.now(timezone.utc),
                         'duration': (datetime.now(timezone.utc) - pos['time']).total_seconds() / 3600
-                    })
+                    }
+                    trades[symbol].append(trade)
+                    log_trade(trade)
                     equity += loss
                     positions[symbol].remove(pos)
                     continue
-                # Take-profit
-                if last_candle['close'] > last_candle['mean']:
-                    profit = (last_candle['close'] - pos['entry_price']) * pos['qty']
-                    trades[symbol].append({
+
+                # Take-profit using last CLOSED candle
+                if last_closed_candle['close'] > last_closed_candle['mean']:
+                    profit = (last_closed_candle['close'] - pos['entry_price']) * pos['qty']
+                    trade = {
+                        'symbol': symbol,
                         'type': 'take_profit',
                         'entry': pos['entry_price'],
-                        'exit': last_candle['close'],
+                        'exit': last_closed_candle['close'],
                         'profit': profit,
                         'entry_time': pos['time'],
                         'exit_time': datetime.now(timezone.utc),
                         'duration': (datetime.now(timezone.utc) - pos['time']).total_seconds() / 3600
-                    })
+                    }
+                    trades[symbol].append(trade)
+                    log_trade(trade)
                     equity += profit
                     positions[symbol].remove(pos)
 
-        # =======================
-        # Portfolio Print (only open positions)
-        # =======================
-        print(f"Time: {datetime.now(timezone.utc)}")
-        print(f"Equity: {equity:.2f} USDT")
-
+        # Portfolio print
+        print(f"Time: {datetime.now(timezone.utc)} | Equity: {equity:.2f} USDT")
         total_realized = sum(trade['profit'] for syms in trades.values() for trade in syms)
         print(f"Total Realized PnL: {total_realized:.2f} USDT")
-
         total_unrealized = 0
         for sym in symbols:
             current_price = get_current_price(sym)
@@ -213,22 +212,9 @@ while True:
             for pos in positions[sym]:
                 total_unrealized += (current_price - pos['entry_price']) * pos['qty']
         print(f"Total Unrealized PnL: {total_unrealized:.2f} USDT")
-
-        # Only show symbols with open positions
-        for symbol in symbols:
-            if len(positions[symbol]) == 0:
-                continue
-            print(f"=== {symbol} ===")
-            current_price = get_current_price(symbol)
-            for pos in positions[symbol]:
-                unrealized = (current_price - pos['entry_price']) * pos['qty'] if current_price else 0
-                percent_equity = (pos['qty'] * (current_price if current_price else pos['entry_price'])) / equity * 100
-                duration = (datetime.now(timezone.utc) - pos['time']).total_seconds() / 3600
-                print(f"Entry: {pos['entry_price']:.2f}, Unrealized PnL: {unrealized:.2f}, %Equity: {percent_equity:.2f}, Duration(h): {duration:.2f}")
-            print(f"Closed Trades: {len(trades[symbol])}")
         print("-"*50)
 
-        time.sleep(300)  # wait 5 minutes
+        time.sleep(60)  # check every 1 min
 
     except BinanceAPIException as e:
         print(f"Binance API Error: {e}")
