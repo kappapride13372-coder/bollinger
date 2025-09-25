@@ -202,21 +202,37 @@ try:
                     positions[symbol].remove(pos)
                     print(Fore.YELLOW + f"[{symbol}] ✅ Take Profit at {last_closed_candle['close']:.4f} | PnL: {profit:.2f}")
 
-        # --- Summary Output ---
-        print(Style.BRIGHT + Fore.MAGENTA + f"\n📊 Portfolio Update @ {datetime.now(timezone.utc)}")
-        print(Style.BRIGHT + Fore.GREEN + f"Equity: {equity:.2f} USDT")
+# --- Summary Output ---
+print(Style.BRIGHT + Fore.MAGENTA + f"\n📊 Portfolio Update @ {datetime.now(timezone.utc)}")
+print(Style.BRIGHT + Fore.GREEN + f"Equity: {equity:.2f} USDT")
 
-        total_realized = sum(trade['profit'] for syms in trades.values() for trade in syms)
-        print(Style.BRIGHT + Fore.YELLOW + f"Realized PnL: {total_realized:.2f} USDT")
+total_realized = sum(trade['profit'] for syms in trades.values() for trade in syms)
+print(Style.BRIGHT + Fore.YELLOW + f"Realized PnL: {total_realized:.2f} USDT")
 
-        total_unrealized = 0
-        for sym in symbols:
-            current_price = get_current_price(sym)
-            if current_price is None:
-                continue
-            for pos in positions[sym]:
-                total_unrealized += (current_price - pos['entry_price']) * pos['qty']
-        print(Style.BRIGHT + Fore.CYAN + f"Unrealized PnL: {total_unrealized:.2f} USDT")
+total_unrealized = 0
+open_positions_exist = False
+
+for sym in symbols:
+    current_price = get_current_price(sym)
+    if current_price is None:
+        continue
+
+    for pos in positions[sym]:
+        open_positions_exist = True
+        unrealized = (current_price - pos['entry_price']) * pos['qty']
+        total_unrealized += unrealized
+        print(
+            Fore.LIGHTWHITE_EX
+            + f"  [{sym}] Entry: {pos['entry_price']:.4f} | Qty: {pos['qty']:.4f} | "
+              f"Current: {current_price:.4f} | PnL: {unrealized:.2f} USDT"
+        )
+
+print(Style.BRIGHT + Fore.CYAN + f"Unrealized PnL (total): {total_unrealized:.2f} USDT")
+
+if not open_positions_exist:
+    print(Fore.LIGHTBLACK_EX + "No open positions.")
+
+print(Fore.MAGENTA + "-"*60)
 
         # Show open positions
         open_positions = [(sym, pos['entry_price'], pos['qty']) for sym in symbols for pos in positions[sym]]
