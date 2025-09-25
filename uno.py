@@ -71,7 +71,7 @@ stop_loss_pct = 0.40
 # =======================
 # Helper Functions
 # =======================
-def fetch_klines(symbol, interval, limit=200, retries=5, delay=5):
+def fetch_klines(symbol, interval, limit=1000, retries=5, delay=5):
     for attempt in range(retries):
         try:
             klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
@@ -146,7 +146,7 @@ def scan_for_entry(symbol, last_closed_candle):
 try:
     while True:
         for symbol in symbols:
-            df = fetch_klines(symbol, interval, limit=200)
+            df = fetch_klines(symbol, interval, limit=1000)
             if df is None or len(df) < bollinger_length:
                 continue
             df = calculate_bollinger(df)
@@ -202,45 +202,34 @@ try:
                     positions[symbol].remove(pos)
                     print(Fore.YELLOW + f"[{symbol}] ✅ Take Profit at {last_closed_candle['close']:.4f} | PnL: {profit:.2f}")
 
-# --- Summary Output ---
-print(Style.BRIGHT + Fore.MAGENTA + f"\n📊 Portfolio Update @ {datetime.now(timezone.utc)}")
-print(Style.BRIGHT + Fore.GREEN + f"Equity: {equity:.2f} USDT")
+        # --- Portfolio Summary ---
+        print(Style.BRIGHT + Fore.MAGENTA + f"\n📊 Portfolio Update @ {datetime.now(timezone.utc)}")
+        print(Style.BRIGHT + Fore.GREEN + f"Equity: {equity:.2f} USDT")
 
-total_realized = sum(trade['profit'] for syms in trades.values() for trade in syms)
-print(Style.BRIGHT + Fore.YELLOW + f"Realized PnL: {total_realized:.2f} USDT")
+        total_realized = sum(trade['profit'] for syms in trades.values() for trade in syms)
+        print(Style.BRIGHT + Fore.YELLOW + f"Realized PnL: {total_realized:.2f} USDT")
 
-total_unrealized = 0
-open_positions_exist = False
+        total_unrealized = 0
+        open_positions_exist = False
 
-for sym in symbols:
-    current_price = get_current_price(sym)
-    if current_price is None:
-        continue
+        for sym in symbols:
+            current_price = get_current_price(sym)
+            if current_price is None:
+                continue
 
-    for pos in positions[sym]:
-        open_positions_exist = True
-        unrealized = (current_price - pos['entry_price']) * pos['qty']
-        total_unrealized += unrealized
-        print(
-            Fore.LIGHTWHITE_EX
-            + f"  [{sym}] Entry: {pos['entry_price']:.4f} | Qty: {pos['qty']:.4f} | "
-              f"Current: {current_price:.4f} | PnL: {unrealized:.2f} USDT"
-        )
+            for pos in positions[sym]:
+                open_positions_exist = True
+                unrealized = (current_price - pos['entry_price']) * pos['qty']
+                total_unrealized += unrealized
+                print(
+                    Fore.LIGHTWHITE_EX
+                    + f"  [{sym}] Entry: {pos['entry_price']:.4f} | Qty: {pos['qty']:.4f} | "
+                      f"Current: {current_price:.4f} | PnL: {unrealized:.2f} USDT"
+                )
 
-print(Style.BRIGHT + Fore.CYAN + f"Unrealized PnL (total): {total_unrealized:.2f} USDT")
+        print(Style.BRIGHT + Fore.CYAN + f"Unrealized PnL (total): {total_unrealized:.2f} USDT")
 
-if not open_positions_exist:
-    print(Fore.LIGHTBLACK_EX + "No open positions.")
-
-print(Fore.MAGENTA + "-"*60)
-
-        # Show open positions
-        open_positions = [(sym, pos['entry_price'], pos['qty']) for sym in symbols for pos in positions[sym]]
-        if open_positions:
-            print(Style.BRIGHT + Fore.WHITE + "Open Positions:")
-            for sym, entry, qty in open_positions:
-                print(Fore.LIGHTWHITE_EX + f"  - {sym} | Entry: {entry:.4f} | Qty: {qty:.4f}")
-        else:
+        if not open_positions_exist:
             print(Fore.LIGHTBLACK_EX + "No open positions.")
 
         print(Fore.MAGENTA + "-"*60)
