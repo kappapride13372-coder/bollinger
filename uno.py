@@ -5,12 +5,15 @@ from binance.enums import *
 from binance.exceptions import BinanceAPIException
 import time
 from datetime import datetime, timezone
+from colorama import Fore, Style, init
 
 # =======================
-# Binance API setup
+# Setup
 # =======================
-api_key = 'U8J05yLTrjPnyyjjK6PqsadNI6XGwEO53h25PyTfIKBkUpHfiLgTrOYMeyO4mRN7'
-api_secret = 'zALQdNiCInvTb7OsrbNJR6pnPGHW1ULAuvMoLyo4vW83V4k78ulGeJemXJ62FDSf'
+init(autoreset=True)  # auto reset colors after each print
+
+api_key = "U8J05yLTrjPnyyjjK6PqsadNI6XGwEO53h25PyTfIKBkUpHfiLgTrOYMeyO4mRN7"
+api_secret = "zALQdNiCInvTb7OsrbNJR6pnPGHW1ULAuvMoLyo4vW83V4k78ulGeJemXJ62FDSf"
 client = Client(api_key, api_secret, requests_params={'timeout': 10})  # 10s timeout
 
 # =======================
@@ -68,7 +71,7 @@ stop_loss_pct = 0.40
 # =======================
 # Helper Functions
 # =======================
-def fetch_klines(symbol, interval, limit=1000, retries=5, delay=5):
+def fetch_klines(symbol, interval, limit=200, retries=5, delay=5):
     for attempt in range(retries):
         try:
             klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
@@ -85,7 +88,7 @@ def fetch_klines(symbol, interval, limit=1000, retries=5, delay=5):
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
             return df
         except Exception as e:
-            print(f"Error fetching {symbol} klines (attempt {attempt+1}/{retries}): {e}")
+            print(Fore.RED + f"Error fetching {symbol} klines (attempt {attempt+1}/{retries}): {e}")
             time.sleep(delay)
     return None
 
@@ -101,7 +104,7 @@ def get_current_price(symbol):
         ticker = client.get_symbol_ticker(symbol=symbol)
         return float(ticker['price'])
     except Exception as e:
-        print(f"Error fetching live price for {symbol}: {e}")
+        print(Fore.RED + f"Error fetching live price for {symbol}: {e}")
         return None
 
 # =======================
@@ -135,7 +138,7 @@ def scan_for_entry(symbol, last_closed_candle):
             'stop_loss': last_closed_candle['close'] * (1 - stop_loss_pct)
         }
         positions[symbol].append(position)
-        print(f"[{symbol}] New position entered at {last_closed_candle['close']:.4f} USDT")
+        print(Fore.GREEN + f"[{symbol}] 🚀 New position entered at {last_closed_candle['close']:.4f} USDT | Qty: {qty:.4f}")
 
 # =======================
 # Main Loop
@@ -143,7 +146,7 @@ def scan_for_entry(symbol, last_closed_candle):
 try:
     while True:
         for symbol in symbols:
-            df = fetch_klines(symbol, interval, limit=1000)
+            df = fetch_klines(symbol, interval, limit=200)
             if df is None or len(df) < bollinger_length:
                 continue
             df = calculate_bollinger(df)
@@ -152,6 +155,9 @@ try:
             if last_scanned[symbol] == last_closed_candle['timestamp']:
                 continue
             last_scanned[symbol] = last_closed_candle['timestamp']
+
+            # Show scanning status
+            print(Fore.CYAN + f"[{symbol}] 🔎 Scanning {last_closed_candle['timestamp']} | Close={last_closed_candle['close']:.4f}, Lower={last_closed_candle['lower']:.4f}")
 
             current_price = get_current_price(symbol)
             if current_price is None:
@@ -176,9 +182,9 @@ try:
                     log_trade(trade)
                     equity += loss
                     positions[symbol].remove(pos)
-                    continue
+                    print(Fore.RED + f"[{symbol}] ❌ Stop loss hit at {current_price:.4f} | PnL: {loss:.2f}")
 
-                if last_closed_candle['close'] > last_closed_candle['mean']:
+                elif last_closed_candle['close'] > last_closed_candle['mean']:
                     profit = (last_closed_candle['close'] - pos['entry_price']) * pos['qty']
                     trade = {
                         'symbol': symbol,
@@ -194,10 +200,15 @@ try:
                     log_trade(trade)
                     equity += profit
                     positions[symbol].remove(pos)
+                    print(Fore.YELLOW + f"[{symbol}] ✅ Take Profit at {last_closed_candle['close']:.4f} | PnL: {profit:.2f}")
 
-        print(f"Time: {datetime.now(timezone.utc)} | Equity: {equity:.2f} USDT")
+        # --- Summary Output ---
+        print(Style.BRIGHT + Fore.MAGENTA + f"\n📊 Portfolio Update @ {datetime.now(timezone.utc)}")
+        print(Style.BRIGHT + Fore.GREEN + f"Equity: {equity:.2f} USDT")
+
         total_realized = sum(trade['profit'] for syms in trades.values() for trade in syms)
-        print(f"Total Realized PnL: {total_realized:.2f} USDT")
+        print(Style.BRIGHT + Fore.YELLOW + f"Realized PnL: {total_realized:.2f} USDT")
+
         total_unrealized = 0
         for sym in symbols:
             current_price = get_current_price(sym)
@@ -205,9 +216,19 @@ try:
                 continue
             for pos in positions[sym]:
                 total_unrealized += (current_price - pos['entry_price']) * pos['qty']
-        print(f"Total Unrealized PnL: {total_unrealized:.2f} USDT")
-        print("-"*50)
+        print(Style.BRIGHT + Fore.CYAN + f"Unrealized PnL: {total_unrealized:.2f} USDT")
 
+        # Show open positions
+        open_positions = [(sym, pos['entry_price'], pos['qty']) for sym in symbols for pos in positions[sym]]
+        if open_positions:
+            print(Style.BRIGHT + Fore.WHITE + "Open Positions:")
+            for sym, entry, qty in open_positions:
+                print(Fore.LIGHTWHITE_EX + f"  - {sym} | Entry: {entry:.4f} | Qty: {qty:.4f}")
+        else:
+            print(Fore.LIGHTBLACK_EX + "No open positions.")
+
+        print(Fore.MAGENTA + "-"*60)
         time.sleep(60)
+
 except KeyboardInterrupt:
-    print("Bot stopped manually.")
+    print(Fore.RED + "🛑 Bot stopped manually.")
